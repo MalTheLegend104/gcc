@@ -28,11 +28,11 @@
 /* Startup objects. */
 #undef STARTFILE_SPEC
 #define STARTFILE_SPEC \
-  "/lib/crt1.o%s /lib/crti.o crtbegin.o%s"
+  "crt1.o%s crti.o%s crtbegin.o%s"
 
 #undef ENDFILE_SPEC
 #define ENDFILE_SPEC \
-  "crtend.o%s /lib/crtn.o"
+  "crtend.o%s crtn.o%s"
 
 /* Default libraries. */
 #undef LIB_SPEC
