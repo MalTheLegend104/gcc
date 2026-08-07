@@ -300,6 +300,9 @@ struct riscv_tune_param
   const char *jump_align;
   const char *loop_align;
   bool prefer_agnostic;
+  unsigned short int_reassoc_width = 1;
+  unsigned short fp_reassoc_width = 1;
+  unsigned short vec_reassoc_width = 1;
   unsigned int small_loop_unroll_ninsns = 4;
   unsigned int small_loop_unroll_factor = 2;
 };
@@ -665,6 +668,9 @@ static const struct riscv_tune_param generic_ooo_tune_info = {
   NULL,						/* jump_align */
   NULL,						/* loop_align */
   true,						/* prefer-agnostic.  */
+  2,						/* int_reassoc_width.  */
+  2,						/* fp_reassoc_width.  */
+  1,						/* vec_reassoc_width.  */
 };
 
 static const common_vector_cost xt_c9501_vls_vector_cost = {
@@ -736,6 +742,9 @@ static const struct riscv_tune_param xt_c9501_tune_info = {
   "8",						/* jump_align */
   "16",						/* loop_align */
   true,						/* prefer-agnostic.  */
+  3,						/* int_reassoc_width.  */
+  2,						/* fp_reassoc_width.  */
+  1,						/* vec_reassoc_width.  */
   4,	/* small_loop_unroll_ninsns.  */
   8,	/* small_loop_unroll_factor.  */
 };
@@ -9876,10 +9885,17 @@ riscv_adjust_multi_push_cfi_prologue (int saved_size)
 static void
 riscv_emit_stack_tie (rtx reg)
 {
-  if (Pmode == SImode)
-    emit_insn (gen_stack_tiesi (stack_pointer_rtx, reg));
+  /* A frame-pointer tie requires a saved frame pointer.  */
+  if (REG_P (reg)
+      && REGNO (reg) == HARD_FRAME_POINTER_REGNUM)
+    gcc_assert (frame_pointer_needed
+		&& (cfun->machine->frame.mask
+		    & (1U << HARD_FRAME_POINTER_REGNUM)));
+
+  if (rtx_equal_p (reg, stack_pointer_rtx))
+    emit_insn (gen_stack_tie_sp (Pmode, reg));
   else
-    emit_insn (gen_stack_tiedi (stack_pointer_rtx, reg));
+    emit_insn (gen_stack_tie (Pmode, stack_pointer_rtx, reg));
 }
 
 /*zcmp multi push and pop code_for_push_pop function ptr array  */
@@ -10508,6 +10524,11 @@ riscv_expand_epilogue (int style)
   unsigned th_int_mask = 0;
   rtx insn;
 
+  /* Avoid referencing an unused frame pointer.  */
+  rtx stack_tie_reg = frame_pointer_needed
+		      ? hard_frame_pointer_rtx
+		      : stack_pointer_rtx;
+
   /* We need to add memory barrier to prevent read from deallocated stack.  */
   bool need_barrier_p = known_ne (get_frame_size ()
 				  + cfun->machine->frame.arg_pointer_offset, 0);
@@ -10628,7 +10649,7 @@ riscv_expand_epilogue (int style)
   if (known_gt (step1, 0))
     {
       /* Emit a barrier to prevent loads from a deallocated stack.  */
-      riscv_emit_stack_tie (hard_frame_pointer_rtx);
+      riscv_emit_stack_tie (stack_tie_reg);
       need_barrier_p = false;
 
       /* Restore the scalable frame which is assigned in prologue.  */
@@ -10729,7 +10750,7 @@ riscv_expand_epilogue (int style)
     frame->mask = mask; /* Undo the above fib.  */
 
   if (need_barrier_p)
-    riscv_emit_stack_tie (hard_frame_pointer_rtx);
+    riscv_emit_stack_tie (stack_tie_reg);
 
   /* Deallocate the final bit of the frame.  */
   if (step2.to_constant () > 0)
@@ -11426,6 +11447,20 @@ static int
 riscv_issue_rate (void)
 {
   return tune_param->issue_rate;
+}
+
+/* Implement TARGET_SCHED_REASSOCIATION_WIDTH.  */
+
+static int
+riscv_reassociation_width (tree_code opc ATTRIBUTE_UNUSED, machine_mode mode)
+{
+  if (VECTOR_MODE_P (mode))
+    return tune_param->vec_reassoc_width;
+  if (INTEGRAL_MODE_P (mode))
+    return tune_param->int_reassoc_width;
+  if (FLOAT_MODE_P (mode))
+    return tune_param->fp_reassoc_width;
+  return 1;
 }
 
 /* Structure for very basic vector configuration tracking in the scheduler.  */
@@ -13553,6 +13588,11 @@ riscv_subword_address (rtx mem, rtx *aligned_mem, rtx *shift, rtx *mask,
   /* Calculate the shift amount.  */
   emit_move_insn (*shift, gen_rtx_AND (SImode, gen_lowpart (SImode, addr),
 				       gen_int_mode (3, SImode)));
+  if (TARGET_BIG_ENDIAN)
+    emit_move_insn (*shift, gen_rtx_XOR (SImode, *shift,
+					gen_int_mode (GET_MODE (mem) == QImode
+						      ? 3 : 2, SImode)));
+
   emit_move_insn (*shift, gen_rtx_ASHIFT (SImode, *shift,
 					  gen_int_mode (3, SImode)));
 
@@ -16580,6 +16620,9 @@ riscv_memtag_tag_bitsize ()
 
 #undef  TARGET_SCHED_ADJUST_COST
 #define TARGET_SCHED_ADJUST_COST riscv_sched_adjust_cost
+
+#undef TARGET_SCHED_REASSOCIATION_WIDTH
+#define TARGET_SCHED_REASSOCIATION_WIDTH riscv_reassociation_width
 
 #undef TARGET_SCHED_CAN_SPECULATE_INSN
 #define TARGET_SCHED_CAN_SPECULATE_INSN riscv_sched_can_speculate_insn

@@ -7872,6 +7872,7 @@ extern tree build_exc_ptr			(void);
 extern tree build_throw				(location_t, tree,
 						 tsubst_flags_t);
 extern int nothrow_libfn_p			(const_tree);
+extern bool can_convert_eh			(tree, tree);
 extern void check_handlers			(tree);
 extern tree finish_noexcept_expr		(tree, tsubst_flags_t);
 extern bool expr_noexcept_p			(tree, tsubst_flags_t);
@@ -8683,7 +8684,7 @@ extern void finish_transaction_stmt		(tree, tree, int, tree);
 extern tree build_transaction_expr		(location_t, tree, int, tree);
 extern bool cxx_omp_create_clause_info		(tree, tree, bool, bool,
 						 bool, bool);
-extern tree baselink_for_fns                    (tree);
+extern tree baselink_for_fns                    (tree, bool = false);
 extern void finish_static_assert                (tree, tree, location_t,
 						 bool, bool, bool = false);
 extern tree finish_decltype_type                (tree, bool, tsubst_flags_t);

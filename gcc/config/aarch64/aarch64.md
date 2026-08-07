@@ -223,6 +223,7 @@
 )
 
 (define_c_enum "unspec" [
+    UNSPEC_NONE ;; Sentinel value for invalid or missing unspecs
     UNSPEC_AUTIA1716
     UNSPEC_AUTIB1716
     UNSPEC_AUTIASP
@@ -391,6 +392,9 @@
     ;; Represents an SVE-style lane index, in which the indexing applies
     ;; within the containing 128-bit block.
     UNSPEC_SVE_LANE_SELECT
+    ;; Represents an SVE-style lane index, in which the indexing applies
+    ;; within the containing 512-bit block.
+    UNSPEC_SSVE_LANE_SELECT
     UNSPEC_SVE_CNT_PAT
     UNSPEC_SVE_PREFETCH
     UNSPEC_SVE_PREFETCH_GATHER
@@ -4554,7 +4558,8 @@
 	  (plus:GPI (match_operand:GPI 1 "register_operand" "r")
 		    (match_operand:GPI 2 "register_operand" "r"))
 	  (match_dup ovf_commutate)))
-   (clobber (match_scratch:GPI 3 "=r"))]
+   (clobber (match_scratch:GPI 3 "=r"))
+   (clobber (reg:CC CC_REGNUM))]
   "!TARGET_CSSC"
   "#"
   "&& 1"
@@ -4584,7 +4589,8 @@
 	  (minus:GPI (match_operand:GPI 1 "register_operand" "r")
 		     (match_operand:GPI 2 "register_operand" "r"))
 	  (match_dup 1)))
-   (clobber (match_scratch:GPI 3 "=r"))]
+   (clobber (match_scratch:GPI 3 "=r"))
+   (clobber (reg:CC CC_REGNUM))]
   "!TARGET_CSSC"
   "#"
   "&& 1"

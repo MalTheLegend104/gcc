@@ -2429,15 +2429,9 @@ spaceship_replacement (basic_block cond_bb, basic_block middle_bb,
 	 must be different for non-swapped operands and same for swapped
 	 operands.  */
       if ((lhs2 == lhs1)
-	  ^ (HONOR_NANS (TREE_TYPE (lhs1))
-	     ? ((cmp2 == LT_EXPR || cmp2 == LE_EXPR)
-		!= (cmp1 == LT_EXPR || cmp1 == LE_EXPR))
-	     : (((cond2_phi_edge->flags
-		  & ((cmp2 == LT_EXPR || cmp2 == LE_EXPR)
-		     ? EDGE_TRUE_VALUE : EDGE_FALSE_VALUE)) != 0)
-		!= ((e1->flags
-		     & ((cmp1 == LT_EXPR || cmp1 == LE_EXPR)
-			 ? EDGE_TRUE_VALUE : EDGE_FALSE_VALUE)) != 0))))
+	  ^ ((cmp2 == LT_EXPR || cmp2 == LE_EXPR)
+	     != (cmp1 == LT_EXPR || cmp1 == LE_EXPR))
+	  ^ ((cond2_phi_edge->flags & EDGE_FALSE_VALUE) != 0))
 	return false;
       if (!single_pred_p (cond2_bb) || !cond_only_block_p (cond2_bb))
 	return false;
@@ -3695,17 +3689,22 @@ cond_store_replacement_limited (basic_block middle_bb, basic_block join_bb,
 	  tree vuse = gimple_vuse (store_middle);
 	  imm_use_iterator iter;
 	  gimple *use_stmt;
-	  /* There can't be any loads between the store and
-	     the previous store as that might depend on the store.
-	     FIXME: use alias oracle to check dependancies.  */
+	  bool has_load = false;
+	  /* If there is a load, then just reuse the value and not
+	     remove the old store as that might be used by the load.  */
 	  FOR_EACH_IMM_USE_STMT (use_stmt, iter, vuse)
 	    {
 	      if (use_stmt != store_middle
 		  && use_stmt != vphi)
-		return false;
+		{
+		  has_load = true;
+		  break;
+		}
 	    }
 	  other_rhs = gimple_assign_rhs1 (vdef_before);
-	  beforestore = vdef_before;
+	  /* If there is no load, then keep the reference to the store stmt.  */
+	  if (!has_load)
+	    beforestore = vdef_before;
 	}
     }
   /*
@@ -3794,6 +3793,7 @@ cond_store_replacement_limited (basic_block middle_bb, basic_block join_bb,
   gsi_remove (&gsi, true);
   release_defs (store_middle);
 
+  /* Remove the store before the conditional if possible.  */
   if (beforestore)
     {
       gsi = gsi_for_stmt (beforestore);
@@ -4174,12 +4174,39 @@ factor_out_conditional_load (edge e0, edge e1, basic_block merge, gphi *phi,
 
   tree ref0 = gimple_assign_rhs1 (load0);
   tree ref1 = gimple_assign_rhs1 (load1);
+  tree index = nullptr;
+  tree step = nullptr;
+  tree index2 = nullptr;
 
   /* Both must be *P loads of a compatible value type.  The
      TBAA alias-ptr type carried by MEM_REF operand 1 need not match; it is
      merged the way get_alias_type_for_stmts does when the load is built.  */
-  if (TREE_CODE (ref0) != MEM_REF || TREE_CODE (ref1) != MEM_REF
-      || !types_compatible_p (TREE_TYPE (ref0), TREE_TYPE (ref1)))
+  if (TREE_CODE (ref0) != MEM_REF)
+    {
+      if (TREE_CODE (ref0) != TARGET_MEM_REF)
+	return false;
+      index = TMR_INDEX (ref0);
+      step = TMR_STEP (ref0);
+      index2 = TMR_INDEX2 (ref0);
+    }
+  if (TREE_CODE (ref1) == MEM_REF)
+    {
+      if (index || step || index2)
+	return false;
+    }
+  else
+    {
+      if (TREE_CODE (ref1) != TARGET_MEM_REF)
+	return false;
+      if (!safe_operand_equal_p (index, TMR_INDEX (ref1)))
+	return false;
+      if (!safe_operand_equal_p (step, TMR_STEP (ref1)))
+	return false;
+      if (!safe_operand_equal_p (index2, TMR_INDEX2 (ref1)))
+	return false;
+    }
+
+  if (!types_compatible_p (TREE_TYPE (ref0), TREE_TYPE (ref1)))
     return false;
 
   /* The alignment of the two accesses need to be the same.  */
@@ -4303,7 +4330,12 @@ factor_out_conditional_load (edge e0, edge e1, basic_block merge, gphi *phi,
 
   /* Build the combined load RES = *PTR, reusing the PHI result so any range
      info on it is preserved (as factor_out_conditional_operation does).  */
-  tree nref = build2 (MEM_REF, TREE_TYPE (ref0), newptr, newindex);
+  tree nref;
+  if (index || step || index2)
+    nref = build5 (TARGET_MEM_REF, TREE_TYPE (ref0), newptr,
+		   newindex, index, step, index2);
+  else
+    nref = build2 (MEM_REF, TREE_TYPE (ref0), newptr, newindex);
   MR_DEPENDENCE_CLIQUE (nref) = clique;
   MR_DEPENDENCE_BASE (nref) = base;
   tree res = gimple_phi_result (phi);
